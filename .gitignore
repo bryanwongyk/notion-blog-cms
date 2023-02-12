@@ -2,3 +2,5 @@
 node_modules
 postgres-data
 dist
+*.log
+yarn.lock

@@ -11,9 +11,9 @@ export async function up(knex: Knex): Promise<void> {
 
             CREATE TABLE public.authorizations (
                 user_id                         TEXT            NOT NULL,
-                bot_id                          TEXT            NOT NULL,
-                access_token                    TEXT            NOT NULL,
                 workspace_id                    TEXT            NOT NULL,
+                access_token                    TEXT            NOT NULL,
+                bot_id                          TEXT            NOT NULL,
                 created_at                      TIMESTAMP       NOT NULL DEFAULT now(),
                 PRIMARY KEY (user_id, workspace_id, access_token)
             );

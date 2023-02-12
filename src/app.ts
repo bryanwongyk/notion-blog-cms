@@ -2,14 +2,18 @@ import axios from "axios"
 import * as dotenv from "dotenv"
 import express from "express"
 import knex from "knex"
-import util from "util"
 
 import { Client } from "@notionhq/client"
+import { getDatabase } from "@notionhq/client/build/src/api-endpoints"
 import * as Sentry from "@sentry/node"
 import * as Tracing from "@sentry/tracing"
 
 import knexConfig from "../database/knexfile"
 import AccountsRepositoryImpl from "./repository/AccountsRepositoryImpl"
+import AuthorizationsRepositoryImpl from "./repository/AuthorizationsRepositoryImpl"
+import NotionRepositoryImpl from "./repository/NotionRepositoryImpl"
+import logger from "./utils/logger"
+import logJson from "./utils/logJson"
 
 // Set up application
 dotenv.config();
@@ -49,18 +53,29 @@ app.use(Sentry.Handlers.errorHandler());
 const knexTemplate =
   process.env.NODE_ENV == "development" && knex(knexConfig.development);
 const accountsRepository = new AccountsRepositoryImpl(knexTemplate);
-
-// Notion client
-const notion = new Client({ auth: process.env.NOTION_ACCESS_TOKEN });
+const authorizationsRepository = new AuthorizationsRepositoryImpl(knexTemplate);
+let notionRepository: NotionRepositoryImpl | undefined;
 
 // Set up requests
 const keySecret = `${process.env.OAUTH_CLIENT_ID}:${process.env.OAUTH_CLIENT_SECRET}`;
 const encodedKeySecret = Buffer.from(keySecret, "utf8").toString("base64");
-const databaseId = "97980d26d14f4bbcb1dd280f62463872";
+const databaseId = "97980d26d14f4bbcb1dd280f62463872"; // In future, fetch from the user
 
 // API
 app.get("/", (req, res) => {
   res.send("Hello World!");
+});
+
+app.get("/get-content", async (req, res) => {
+  res.send("Hello Dashboard!");
+
+  // Query for database
+  const database = notionRepository.getNotionDatabase(databaseId);
+
+  // Query for page
+  logger.info(database);
+
+  // Query for blocks
 });
 
 app.get("/debug-sentry", function mainHandler(req, res) {
@@ -69,42 +84,33 @@ app.get("/debug-sentry", function mainHandler(req, res) {
 
 app.get("/notion/auth", async (req, res) => {
   const authCode = req.query.code as string;
-  console.log(`authCode: ${authCode}`);
-
   const auth = await authNotion(authCode);
-  console.log(`User access token: ${auth.data.access_token}`);
-  console.log(`User botId: ${auth.data.bot_id}`);
-  console.log(`User ID: ${auth.data.owner.user.id}`);
-  console.log(`User name: ${auth.data.owner.user.name}`);
-  console.log(`User workspace ID: ${auth.data.workspace_id}`);
-
+  const accessToken = auth.data.access_token;
+  const workspaceId = auth.data.workspace_id;
+  const botId = auth.data.bot_id;
   const userId = auth.data.owner.user.id;
   const userName = auth.data.owner.user.name;
-  // Insert user's access token into database so it can be reused in future
-  try {
-    accountsRepository.insertAccount(userId, userName);
-  } catch (err) {
-    console.error(err);
-    Sentry.captureException(err);
-  }
 
-  //   const db = await queryDatabase();
-  //   console.log(`db: ${db}`);
-  //   axios
-  //     .request(authorizationOptions)
-  //     .then((res) => {
-  //       console.log(res.data);
-  //     //   notion.databases.query({
-  //     //     database_id: databaseId,
-  //     //   }).then
-  //     })
-  //     .catch((err) => {
-  //       console.error(err);
-  //     });
+  // Insert user's access token into database so it can be reused in future
+  knexTemplate.transaction(() => {
+    accountsRepository.upsertAccount(userId, userName);
+    authorizationsRepository.upsertAuthorization(
+      userId,
+      workspaceId,
+      accessToken,
+      botId
+    );
+  });
+
+  // Instantiate Notion client with access token
+  notionRepository = new NotionRepositoryImpl(accessToken);
+
+  return res.redirect("/get-content");
 });
 
 const authNotion = async (authCode: string) => {
   try {
+    console.log(`Authenticating Notion with authCode: ${authCode}`);
     const authorizationOptions = {
       method: "POST",
       url: "https://api.notion.com/v1/oauth/token",
@@ -119,17 +125,13 @@ const authNotion = async (authCode: string) => {
         grant_type: "authorization_code",
       },
     };
-    return await axios.request(authorizationOptions);
+    const auth = await axios.request(authorizationOptions);
+    logger.info(`Authenticated Notion with authCode: ${authCode}`);
+    return auth;
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     Sentry.captureException(err);
   }
-};
-
-const queryDatabase = async () => {
-  return await notion.databases.query({
-    database_id: databaseId,
-  });
 };
 
 app.listen(port, () => {
