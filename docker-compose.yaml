@@ -1,0 +1,19 @@
+version: "3.8"
+services:
+  postgres:
+    image: postgres:15.2
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+    ports:
+      - "5432:5432"
+    volumes:
+      # Default to persist database files itself
+      - ./postgres-data:/var/lib/postgresql/data
+      # Copy the sql script to create tables. The official Postgres docker image will run .sql scripts found in the /docker-entrypoint-initdb.d/ folder.
+      - ./database/create.sql:/docker-entrypoint-initdb.d/create.sql
